@@ -18,10 +18,12 @@ type Proxy struct {
 	terminationDelay time.Duration
 	proxyProtocol    *dynamic.ProxyProtocol
 	refreshTarget    bool
+	// startTLS defines which StartTLS handshake will be used.
+	startTLS string
 }
 
 // NewProxy creates a new Proxy.
-func NewProxy(address string, terminationDelay time.Duration, proxyProtocol *dynamic.ProxyProtocol) (*Proxy, error) {
+func NewProxy(address string, terminationDelay time.Duration, proxyProtocol *dynamic.ProxyProtocol, startTLS string) (*Proxy, error) {
 	tcpAddr, err := net.ResolveTCPAddr("tcp", address)
 	if err != nil {
 		return nil, err
@@ -43,6 +45,7 @@ func NewProxy(address string, terminationDelay time.Duration, proxyProtocol *dyn
 		refreshTarget:    refreshTarget,
 		terminationDelay: terminationDelay,
 		proxyProtocol:    proxyProtocol,
+		startTLS:         startTLS,
 	}, nil
 }
 
@@ -57,6 +60,16 @@ func (p *Proxy) ServeTCP(conn WriteCloser) {
 	if err != nil {
 		log.WithoutContext().Errorf("Error while connecting to backend: %v", err)
 		return
+	}
+
+	log.Debug("Connecting to target", p.target)
+	switch p.startTLS {
+	case "postgres":
+		err = invokeStartTLSPostgresHandshake(connBackend)
+		if err != nil {
+			log.Errorf("Error during starttls handshake: %v", err)
+			return
+		}
 	}
 
 	// maybe not needed, but just in case
