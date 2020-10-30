@@ -25,6 +25,7 @@ type Router struct {
 	httpsTLSConfig    *tls.Config // default TLS config
 	catchAllNoTLS     Handler
 	hostHTTPTLSConfig map[string]*tls.Config // TLS configs keyed by SNI
+	connectionFilter  map[string]func(WriteCloser) (WriteCloser, error)
 }
 
 // ServeTCP forwards the connection to the right TCP/HTTP handler.
@@ -34,6 +35,17 @@ func (r *Router) ServeTCP(conn WriteCloser) {
 	if r.catchAllNoTLS != nil && len(r.routingTable) == 0 {
 		r.catchAllNoTLS.ServeTCP(conn)
 		return
+	}
+
+	// this peeks into the connection and tries to perform the
+	// starttls handshake (postgres). It works in both cases,
+	// no matter if the client sends StartTLS header.
+	for _, filterFunc := range r.connectionFilter {
+		conn, err := filterFunc(conn)
+		if err != nil {
+			conn.Close()
+			return
+		}
 	}
 
 	br := bufio.NewReader(conn)
@@ -163,6 +175,17 @@ func (r *Router) HTTPHandler(handler http.Handler) {
 func (r *Router) HTTPSHandler(handler http.Handler, config *tls.Config) {
 	r.httpsHandler = handler
 	r.httpsTLSConfig = config
+}
+
+// ConnectionFilter allows to add a filter func to prefilter incoming connections.
+// This can be used for example to peek into the connection and perform a StartTLS handshake.
+// The filter func is registered by a given name. Successive calls with the same name will
+// overwrite existing entries.
+func (r *Router) ConnectionFilter(name string, filterFunc func(WriteCloser) (WriteCloser, error)) {
+	if r.connectionFilter == nil {
+		r.connectionFilter = make(map[string]func(WriteCloser) (WriteCloser, error))
+	}
+	r.connectionFilter[name] = filterFunc
 }
 
 // Conn is a connection proxy that handles Peeked bytes.
